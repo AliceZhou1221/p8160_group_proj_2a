@@ -1,0 +1,207 @@
+---
+title: "slice_sampling_code"
+output: html_document
+author: AZ
+date: "2025-02-23"
+---
+
+```{r setup, include=FALSE}
+library(parallel)
+library(tidyverse)
+```
+
+# Slice Sampling
+
+Slice sampling, introduced by Neal (2003), constructs a Markov chain that explores the target distribution by iteratively defining and sampling from a slice of the density function.
+
+Given a target density \( f(x) \), slice sampling introduces an auxiliary variable \( y \) such that:
+
+\[
+S = \{x : y < f(x)\}
+\]
+
+where \( y \) is drawn uniformly from \( (0, f(x_0)) \), ensuring that \( S \) contains the support of the distribution. The sampling process involves:
+
+1. **Evaluate the target function**: Given a target distribution \( f(x) \), evaluate \( f(x) \) at the current location \( x_t \).
+
+2. **Draw a point uniformly**: Draw a point \( x_0 \) uniformly between \( f(x_t) \) and the x-axis.
+
+3. **Create a starting point**: Create a horizontal length \( w \) uniformly placed around \( x_0 \).
+
+4. **Stepping out**: From the starting point, move left and right at length \( w \) until the boundaries L and R are above the target function.
+
+5. **Pick a point within the interval**: Choose a point uniformly from [L, R] and check if it is below the target function. If the point is below the function, accept it as a new sample and make this point the new starting point \( x_{t+1} \).
+
+6. **Shrinkage**: If the point is not below the target function, shrink the interval and sample again from the updated range.
+
+7. **Repeat**: repeat the shrinkage step until a valid sample is collected.
+
+8. **New start**: make \( x_{t+1} \) the new starting point and go back to step 1. Repeat step 1-8 until reaching the desired sample size.
+
+
+Slice sampling ensures that each sampled point is within the probability region. The stepping out the shrinkage method allows the sampling to be adaptive to the shape of \( f(x) \).
+
+Define the target density
+```{r}
+# target density
+f = function(x) {
+  exp(0.4 * (x - 0.4)^2 - 0.08 * x^4)
+}
+```
+
+```{r}
+x_vals <- seq(-5, 5, length.out = 1000)
+y_vals <- f(x_vals)
+
+plot(x_vals, y_vals, type = "l", col = "red", lwd = 2,
+     main = "target distribution",
+     xlab = "x", ylab = "Density")
+```
+
+initialize sampler
+```{r}
+# Set initial values
+x0 <- 0  # Starting point
+w <- 0.2726316   # Step size for stepping out
+n_samples <- 10000  # Number of samples
+```
+implement slice sampling
+```{r}
+set.seed(42)
+
+slice_sample <- function(f, x0, w, n_samples) {
+  samples <- numeric(n_samples)  # Storage for samples
+  iteration_counts <- numeric(n_samples) #track number of iteration per sample
+  total_iterations <-0
+  
+  x <- x0  # Initialize x
+  start_time <- Sys.time()
+
+  for (i in 1:n_samples) {
+    iter_count <- 0 #track iteration for this sample
+    
+    # Step 1: Sample auxiliary variable y
+    y <- runif(1, 0, f(x))
+    
+    # Step 2: Find an interval (L, R) around x using stepping out
+    L <- x - w * runif(1)  # Randomly position initial interval
+    R <- L + w
+    
+    # Expand L and R until they are outside the slice
+    while (f(L) > y) { L <- L - w }
+    while (f(R) > y) { R <- R + w }
+
+    # Step 3: Sample a new x within (L, R) using shrinkage
+    repeat {
+      iter_count <- iter_count + 1
+      x_new <- runif(1, L, R)  # Sample uniformly from (L, R)
+      if (f(x_new) > y) {  # Accept if inside the slice
+        x <- x_new
+        break
+      } else {  # Shrink the interval
+        if (x_new < x) { L <- x_new } else { R <- x_new }
+      }
+    }
+    
+    # Store the new sample
+    samples[i] <- x
+    iteration_counts[i] <- iter_count
+    total_iterations <- total_iterations + iter_count
+  }
+  end_time <- Sys.time()  # End timing
+  computing_time <- end_time - start_time
+  
+  # Compute average number of iterations
+  avg_iterations <- mean(iteration_counts)
+  
+  list(
+    samples = samples,
+    acceptance_rate = n_samples/total_iterations,
+    avg_iterations_per_sample = avg_iterations,
+    total_iterations = total_iterations,
+    total_computing_time = computing_time
+  )
+}
+
+```
+
+```{r}
+# Run the slice sampling algorithm
+res <- slice_sample(f, x0, w, n_samples)
+
+res$acceptance_rate
+res$avg_iterations_per_sample
+res$total_computing_time
+```
+
+
+```{r}
+hist(res$samples, probability = TRUE, breaks = 40, col = "lightblue",
+     main = "Histogram of Samples (Slice Sampling)",
+     xlab = "x", border = "black")
+
+# Define the theoretical density function
+f = function(x) {
+  exp(0.4 * (x - 0.4)^2 - 0.08 * x^4)
+}
+
+# Normalize the density function
+x_vals <- seq(-3, 3, length.out = 1000)  # Adjust the range as needed
+norm_factor <- integrate(f, -Inf, Inf)$value
+norm_f <- function(x) f(x) / norm_factor
+
+# Overlay the normalized density curve
+curve(norm_f(x), col = "red", lwd = 2, add = TRUE)
+
+```
+
+```{r}
+# Define the range of w values
+w_values <- seq(0.01, 5, length.out = 20)
+
+# Initialize a data frame to store results
+results <- data.frame(w = numeric(), 
+                      acceptance_rate = numeric(), 
+                      avg_iterations = numeric(), 
+                      computing_time = numeric())
+
+# Loop through w values
+for (w in w_values) {
+  start_time <- Sys.time()  # Start timing
+  res <- slice_sample(f, x0, w, n_samples)
+  end_time <- Sys.time()    # End timing
+  
+  # Store results
+  results <- rbind(results, data.frame(
+    w = w,
+    acceptance_rate = res$acceptance_rate,
+    avg_iterations = res$avg_iterations_per_sample,
+    computing_time = as.numeric(difftime(end_time, start_time, units = "secs"))
+  ))
+}
+
+# Load ggplot2 for visualization
+library(ggplot2)
+
+# Plot acceptance rate vs. w
+ggplot(results, aes(x = w, y = acceptance_rate)) +
+  geom_line() + geom_point() +
+  labs(title = "Acceptance Rate vs. w", x = "w", y = "Acceptance Rate")
+
+# Plot average iterations per sample vs. w
+ggplot(results, aes(x = w, y = avg_iterations)) +
+  geom_line() + geom_point() +
+  labs(title = "Average Iterations per Sample vs. w", x = "w", y = "Avg Iterations")
+
+# Plot computing time vs. w
+ggplot(results, aes(x = w, y = computing_time)) +
+  geom_line() + geom_point() +
+  labs(title = "Computing Time vs. w", x = "w", y = "Computing Time (s)")
+
+```
+```{r}
+results[1, ]
+results[2, ]
+```
+
+
