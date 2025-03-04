@@ -1,2 +1,2 @@
-# p8160_group_proj_az
-my code for the group project
+# p8160_group_proj_2a
+this is the repo for group 2A
